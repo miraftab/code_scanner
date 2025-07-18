@@ -5,42 +5,97 @@ const BarcodeScanner = () => {
   const [videoInputDevices, setVideoInputDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const [resultText, setResultText] = useState("");
+  const [isScanning, setIsScanning] = useState(false);
+  const [error, setError] = useState(null);
   const videoRef = useRef(null);
   const codeReaderRef = useRef(null);
+
+  // Function to start the camera
+  const startScanning = async (deviceId) => {
+    if (!deviceId) return;
+
+    try {
+      setIsScanning(true);
+      setError(null);
+      
+      const constraints = {
+        video: {
+          deviceId: { exact: deviceId },
+          facingMode: "environment",
+          width: {
+            ideal: 400,
+            max: 600
+          },
+          height: {
+            ideal: 300,
+            max: 400
+          }
+        }
+      };
+
+      // Start decoding
+      await codeReaderRef.current.decodeFromConstraints(
+        constraints,
+        videoRef.current,
+        (result, err) => {
+          if (result) {
+            console.log("Scan result:", result);
+            setResultText(result.getText());
+          }
+          if (err && !(err instanceof NotFoundException)) {
+            console.error("Scan error:", err);
+            setError(`Error: ${err.message}`);
+          }
+        }
+      );
+
+      console.log(`Started continuous decode from camera with id ${deviceId}`);
+    } catch (error) {
+      console.error('Error starting camera:', error);
+      setError(`Error: ${error.message}`);
+      setIsScanning(false);
+    }
+  };
+
+  // Function to stop the camera
+  const stopScanning = () => {
+    if (codeReaderRef.current) {
+      codeReaderRef.current.reset();
+      setIsScanning(false);
+    }
+  };
+
+  // Function to check for environment-facing (back) camera
+  const findBackCamera = async (devices) => {
+    // First, try to find a device with 'environment' facing mode
+    for (const device of devices) {
+      if (device.label.toLowerCase().includes("back") ||
+          device.label.toLowerCase().includes("environment") ||
+          device.label.toLowerCase().includes("rear")) {
+        return device.deviceId;
+      }
+    }
+    
+    // If no obvious back camera found, try to get environment-facing camera using constraints
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" }
+      });
+      // Get the active track to find the device ID
+      const tracks = stream.getVideoTracks();
+      const deviceId = tracks[0]?.getSettings().deviceId;
+      // Stop the stream since we just needed the device ID
+      tracks.forEach(track => track.stop());
+      return deviceId;
+    } catch (error) {
+      console.log("Could not access environment-facing camera:", error);
+      return null;
+    }
+  };
 
   useEffect(() => {
     const codeReader = new BrowserMultiFormatReader();
     codeReaderRef.current = codeReader;
-
-    console.log("ZXing code reader initialized");
-
-    // Function to check for environment-facing (back) camera
-    const findBackCamera = async (devices) => {
-      // First, try to find a device with 'environment' facing mode
-      for (const device of devices) {
-        if (device.label.toLowerCase().includes('back') || 
-            device.label.toLowerCase().includes('environment') ||
-            device.label.toLowerCase().includes('rear')) {
-          return device.deviceId;
-        }
-      }
-      
-      // If no obvious back camera found, try to get environment-facing camera using constraints
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' }
-        });
-        // Get the active track to find the device ID
-        const tracks = stream.getVideoTracks();
-        const deviceId = tracks[0]?.getSettings().deviceId;
-        // Stop the stream since we just needed the device ID
-        tracks.forEach(track => track.stop());
-        return deviceId;
-      } catch (error) {
-        console.log('Could not access environment-facing camera:', error);
-        return null;
-      }
-    };
 
     const setupCameras = async () => {
       try {
@@ -49,82 +104,60 @@ const BarcodeScanner = () => {
         setVideoInputDevices(devices);
 
         if (devices.length === 0) {
-          console.log('No video input devices found');
-          return;
+          throw new Error("No video input devices found");
         }
 
         // Try to find a back camera
         const backCameraId = await findBackCamera(devices);
+        const deviceIdToUse = backCameraId || devices[0].deviceId;
         
-        if (backCameraId) {
-          console.log('Found back camera with ID:', backCameraId);
-          setSelectedDeviceId(backCameraId);
-        } else {
-          // Fallback to the first available device
-          console.log('No back camera found, using default camera');
-          setSelectedDeviceId(devices[0].deviceId);
-        }
+        console.log(backCameraId ? "Found back camera" : "Using default camera");
+        setSelectedDeviceId(deviceIdToUse);
+        
+        // Automatically start scanning with the selected camera
+        await startScanning(deviceIdToUse);
+        
       } catch (error) {
-        console.error('Error setting up cameras:', error);
+        console.error("Error setting up cameras:", error);
+        setError(`Camera error: ${error.message}`);
       }
     };
 
     setupCameras();
 
+    // Cleanup function
     return () => {
-      codeReader.reset();
+      stopScanning();
+      if (codeReaderRef.current) {
+        codeReaderRef.current.reset();
+      }
     };
   }, []);
 
-  const startScanning = () => {
-    if (!selectedDeviceId) return;
-
-    // Add environment-facing constraint when starting the camera
-    const constraints = {
-      video: {
-        deviceId: { exact: selectedDeviceId },
-        facingMode: 'environment',  // Prefer environment-facing camera
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      }
-    };
-
-    codeReaderRef.current.decodeFromConstraints(
-      constraints,
-      videoRef.current,
-      (result, err) => {
-        if (result) {
-          console.log(result);
-          setResultText(result.getText());
-        }
-        if (err && !(err instanceof NotFoundException)) {
-          console.error(err);
-          setResultText(err.toString());
-        }
-      }
-    );
-
-    console.log(`Started continuous decode from camera with id ${selectedDeviceId}`);
-  };
-
-  const resetScanner = () => {
-    codeReaderRef.current.reset();
-    setResultText("");
-    console.log("Reset.");
+  // Handle camera device change
+  const handleDeviceChange = (event) => {
+    const newDeviceId = event.target.value;
+    setSelectedDeviceId(newDeviceId);
+    stopScanning();
+    startScanning(newDeviceId);
   };
 
   return (
-    <div className="p-4">
-      <h2 className="text-xl font-bold mb-4">Barcode Scanner</h2>
+    <div>
+      {error && (
+        <div style={{ color: 'red', marginBottom: '10px' }}>
+          {error}
+        </div>
+      )}
 
-      {videoInputDevices.length > 0 && (
-        <div id="sourceSelectPanel" className="mb-4">
-          <label className="block mb-2">Select Camera:</label>
+      {videoInputDevices.length > 1 && (
+        <div style={{ marginBottom: '10px' }}>
+          <label style={{ display: 'block', marginBottom: '5px' }}>Select Camera:</label>
           <select
-            id="sourceSelect"
-            className="p-2 border rounded"
             value={selectedDeviceId}
-            onChange={(e) => setSelectedDeviceId(e.target.value)}
+            onChange={handleDeviceChange}
+            disabled={!isScanning}
+            style={{ padding: '5px' }}
           >
             {videoInputDevices.map((device, index) => (
               <option key={index} value={device.deviceId}>
@@ -135,32 +168,46 @@ const BarcodeScanner = () => {
         </div>
       )}
 
-      <div className="flex space-x-4 mb-4">
-        <button
-          id="startButton"
-          onClick={startScanning}
-          className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded"
-        >
-          Start
-        </button>
-        <button
-          id="resetButton"
-          onClick={resetScanner}
-          className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded"
-        >
-          Reset
-        </button>
+      <div style={{ position: 'relative', width: '100%', maxWidth: '600px', margin: '0 auto' }}>
+        <video
+          ref={videoRef}
+          style={{
+            width: '100%',
+            height: 'auto',
+            display: isScanning ? 'block' : 'none',
+            border: '1px solid #ccc'
+          }}
+        />
+        {!isScanning && !error && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: '#f5f5f5',
+            border: '1px dashed #ccc',
+            color: '#666'
+          }}>
+            Initializing camera...
+          </div>
+        )}
       </div>
 
-      <video
-        ref={videoRef}
-        id="video"
-        className="w-full max-w-md rounded-xl shadow-lg mb-4"
-      />
-
-      <p id="result" className="text-lg font-mono text-gray-800">
-        {resultText}
-      </p>
+      {resultText && (
+        <div style={{
+          marginTop: '15px',
+          padding: '10px',
+          backgroundColor: '#f0f0f0',
+          borderRadius: '4px',
+          wordBreak: 'break-all'
+        }}>
+          <strong>Scanned:</strong> {resultText}
+        </div>
+      )}
     </div>
   );
 };
