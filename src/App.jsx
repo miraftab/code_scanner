@@ -3,30 +3,19 @@ import "./App.css";
 import BarcodeScanner from "./BarcodeScanner.jsx";
 
 function App() {
-  const [scanResult, setScanResult] = useState("");
-
-  const handleScan = (barcode) => {
-    console.log("Scanned barcode:", barcode);
-    setScanResult(barcode);
+  const handleScan = (code) => {
+    console.log("Scanned code:", code);
+    alert(`Scanned: ${code}`);
   };
 
-  const handleError = (error) => {
-    console.error("Barcode scanner error:", error);
+  const handleError = (err) => {
+    console.error("Scanner error:", err);
   };
 
   return (
-    <div className="app">
-      <h1>Barcode Scanner Demo</h1>
-      <BarcodeScanner
-        onScan={handleScan}
-        onError={handleError}
-      />
-      {scanResult && (
-        <div className="result">
-          <h3>Last Scanned:</h3>
-          <p>{scanResult}</p>
-        </div>
-      )}
+    <div className="p-4">
+      <h1 className="text-xl font-bold mb-4">Barcode Scanner</h1>
+      <BarcodeScanner onScan={handleScan} onError={handleError} />
     </div>
   );
 }
