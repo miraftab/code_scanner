@@ -40,6 +40,7 @@ const BarcodeScanner = ({ onScan, onError, videoConstraints = { width: 640, heig
   }, []);
 
   const startScanning = async () => {
+    console.log('startScanning');
     try {
       if (!selectedDeviceId || !videoRef.current) {
         throw new Error("No video device selected or video element not available");
