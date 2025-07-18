@@ -39,48 +39,69 @@ const BarcodeScanner = ({ onScan, onError, videoConstraints = { width: 640, heig
     };
   }, []);
 
-  const startScanning = () => {
-    if (!selectedDeviceId || !videoRef.current) {
-      setError("No video device selected or video element not available");
-      return;
-    }
-    
-    setError("");
-    setIsScanning(true);
-    
-    codeReader.current
-      .decodeFromVideoDevice(selectedDeviceId, videoRef.current, (result, err) => {
-        if (result) {
-          const resultText = result.getText();
-          if (onScan) {
-            onScan(resultText);
-          }
-        }
+  const startScanning = async () => {
+    try {
+      if (!selectedDeviceId || !videoRef.current) {
+        throw new Error("No video device selected or video element not available");
+      }
 
-        if (err) {
-          // Skip NotFoundException (code 8) which is thrown when no barcode is found
-          if (err.name === 'NotFoundException' || err.code === 8) {
-            return; // This is a normal case when no barcode is found
+      // Clear any previous errors
+      setError("");
+      
+      // Request camera permissions explicitly
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: selectedDeviceId,
+          ...videoConstraints
+        }
+      });
+      
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+      
+      setIsScanning(true);
+      
+      codeReader.current
+        .decodeFromVideoDevice(selectedDeviceId, videoRef.current, (result, err) => {
+          if (result) {
+            const resultText = result.getText();
+            if (onScan) {
+              onScan(resultText);
+            }
           }
-          
-          console.error("Scan error:", err);
-          setError(`Scan error: ${err.message || 'Unknown error occurred'}`);
+
+          if (err) {
+            // Skip NotFoundException (code 8) which is thrown when no barcode is found
+            if (err.name === 'NotFoundException' || err.code === 8) {
+              return; // This is a normal case when no barcode is found
+            }
+            
+            console.error("Scan error:", err);
+            setError(`Scan error: ${err.message || 'Unknown error occurred'}`);
+            if (onError) {
+              onError(err);
+            }
+          }
+        })
+        .then(ctrl => {
+          controls.current = ctrl;
+        })
+        .catch(err => {
+          console.error("Failed to start scanning:", err);
+          setError(`Failed to start scanning: ${err.message}`);
+          setIsScanning(false);
           if (onError) {
             onError(err);
           }
-        }
-      })
-      .then(ctrl => {
-        controls.current = ctrl;
-      })
-      .catch(err => {
-        console.error("Failed to start scanning:", err);
-        setError(`Failed to start scanning: ${err.message}`);
-        setIsScanning(false);
-        if (onError) {
-          onError(err);
-        }
-      });
+        });
+    } catch (err) {
+      console.error("Error accessing camera:", err);
+      setError(`Camera access error: ${err.message || 'Please check camera permissions'}`);
+      setIsScanning(false);
+      if (onError) {
+        onError(err);
+      }
+    }
   };
 
   const stopScanning = () => {
@@ -113,8 +134,42 @@ const BarcodeScanner = ({ onScan, onError, videoConstraints = { width: 640, heig
   };
 
   return (
-    <div className="barcode-scanner" style={{ maxWidth: '600px', margin: '0 auto' }}>
-      <div className="video-container" style={{ position: 'relative', paddingTop: '75%' }}>
+    <div style={{ maxWidth: '100%', margin: '0 auto', padding: '20px', fontFamily: 'Arial, sans-serif' }}>
+      <h2 style={{ textAlign: 'center', marginBottom: '20px', color: '#333' }}>Barcode Scanner</h2>
+      
+      {/* Error Display */}
+      {error && (
+        <div style={{
+          backgroundColor: '#ffebee',
+          color: '#d32f2f',
+          padding: '15px',
+          borderRadius: '4px',
+          marginBottom: '20px',
+          borderLeft: '4px solid #f44336',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px'
+        }}>
+          <span style={{ fontWeight: 'bold' }}>Error:</span>
+          <span>{error}</span>
+          {error.includes('permission') && (
+            <span style={{ marginLeft: 'auto', fontSize: '0.9em' }}>
+              Please check your browser's camera permissions and try again.
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Camera Preview */}
+      <div style={{
+        position: 'relative',
+        width: '100%',
+        height: '300px',
+        marginBottom: '20px',
+        borderRadius: '8px',
+        overflow: 'hidden',
+        backgroundColor: '#f5f5f5'
+      }}>
         <video
           ref={videoRef}
           style={{
@@ -233,18 +288,6 @@ const BarcodeScanner = ({ onScan, onError, videoConstraints = { width: 640, heig
         </div>
       </div>
 
-      {error && (
-        <div style={{
-          padding: '12px',
-          backgroundColor: '#ffebee',
-          borderLeft: '4px solid #f44336',
-          color: '#d32f2f',
-          borderRadius: '4px',
-          marginTop: '15px'
-        }}>
-          {error}
-        </div>
-      )}
     </div>
   );
 };
