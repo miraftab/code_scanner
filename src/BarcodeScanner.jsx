@@ -9,96 +9,115 @@ const BarcodeScanner = ({onScan, onError}) => {
   const codeReaderRef = useRef(null);
 
   useEffect(() => {
-    codeReaderRef.current = new BrowserCodeReader(new BrowserMultiFormatReader());
-
-    const startScanner = async () => {
+    const initScanner = async () => {
       try {
         setScanning(true);
+        
         const hints = new Map();
-        hints.set(
-          BarcodeFormat.EAN_13,
-          true
-        );
-        hints.set(
-          BarcodeFormat.EAN_8,
-          true
+        hints.set(BarcodeFormat.EAN_13, true);
+        hints.set(BarcodeFormat.EAN_8, true);
+
+        codeReaderRef.current = new BrowserCodeReader(
+          new BrowserMultiFormatReader(hints)
         );
 
-        codeReaderRef.current = new BrowserMultiFormatReader(hints);
+        console.log('Initialized code reader, requesting camera access...');
 
-        console.log('Requesting camera devices...');
-        let videoInputDevices;
         try {
-          videoInputDevices = await BrowserCodeReader.listVideoInputDevices();
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { 
+              facingMode: 'environment', // Prefer rear camera on mobile
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            } 
+          });
+          
+          stream.getTracks().forEach(track => track.stop());
+          
+          console.log('Camera access granted, listing devices...');
+          
+          const videoInputDevices = await BrowserCodeReader.listVideoInputDevices();
           console.log('Available video devices:', videoInputDevices);
-        } catch (listError) {
-          console.error('Error listing video devices:', listError);
-          throw new Error(`Failed to access camera devices: ${listError.message}`);
-        }
 
-        if (!videoInputDevices || videoInputDevices.length === 0) {
-          const errorMsg = 'No camera devices found. Please ensure your camera is connected and not in use by another application.';
-          console.error(errorMsg);
-          throw new Error(errorMsg);
-        }
+          if (!videoInputDevices || videoInputDevices.length === 0) {
+            throw new Error('No camera devices found.');
+          }
 
-        const firstDeviceId = videoInputDevices[0]?.deviceId;
-        console.log('Using camera device:', videoInputDevices[0]?.label || 'Default Camera');
+          const firstDeviceId = videoInputDevices[0]?.deviceId;
+          console.log('Using camera device:', videoInputDevices[0]?.label || 'Default Camera');
 
-        if (!firstDeviceId) {
-          const errorMsg = 'Camera device ID not available. Please check your camera permissions.';
-          console.error(errorMsg);
-          throw new Error(errorMsg);
-        }
+          if (!firstDeviceId) {
+            throw new Error('Camera device ID not available.');
+          }
 
-        try {
           await codeReaderRef.current.decodeFromVideoDevice(
             firstDeviceId,
             videoRef.current,
-            (result, err) => {
+            (result, error) => {
               if (result) {
                 console.log('Barcode detected:', result.getText());
                 onScan(result.getText());
               }
-              if (err && !(err instanceof NotFoundException)) {
-                console.error('Barcode scan error:', err);
-                onError?.(err);
+              if (error && !(error instanceof NotFoundException)) {
+                console.error('Barcode scan error:', error);
+                onError?.(error);
               }
             }
           );
-        } catch (decodeError) {
-          console.error('Error starting video stream:', decodeError);
-          throw new Error(`Failed to start camera: ${decodeError.message}`);
+          
+        } catch (error) {
+          console.error('Camera access error:', error);
+          if (error.name === 'NotAllowedError') {
+            throw new Error('Camera permission was denied. Please allow camera access to use the barcode scanner.');
+          } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+            throw new Error('No camera found. Please ensure your camera is connected and not in use by another application.');
+          } else {
+            throw new Error(`Failed to access camera: ${error.message}`);
+          }
         }
-      } catch (err) {
-        console.error('Scanner initialization error:', err);
-        onError?.(err);
+      } catch (error) {
+        console.error('Scanner initialization error:', error);
+        setErr(error.message);
+        onError?.(error);
+      } finally {
         setScanning(false);
-        throw err; // Re-throw to be caught by the outer catch
       }
     };
 
-    startScanner().catch(error => {
-      console.error('Error in startScanner:', error);
-      setErr(error.message || 'Failed to access camera');
-      setScanning(false);
-    });
+    initScanner();
 
     return () => {
+      if (codeReaderRef.current) {
+        codeReaderRef.current.reset();
+      }
       setScanning(false);
-      codeReaderRef.current?.reset();
     };
   }, [onScan, onError]);
 
   return (
     <div className="w-full flex flex-col items-center">
-      {err && <p style={{color: 'red'}} className="text-red-600 font-semibold">{err}</p>}
-      <video ref={videoRef} className="w-full max-w-md rounded-xl shadow-lg"/>
-      {scanning ? (
-        <p className="mt-4 text-green-600 font-semibold">Scanning...</p>
-      ) : (
-        <p className="mt-4 text-red-600 font-semibold">Scanner stopped</p>
+      {err && (
+        <div className="p-4 mb-4 text-red-700 bg-red-100 rounded-lg">
+          <p className="font-medium">Error:</p>
+          <p>{err}</p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            Retry
+          </button>
+        </div>
       )}
+      <video 
+        ref={videoRef} 
+        className="w-full max-w-md rounded-xl shadow-lg"
+        playsInline
+      />
+      {scanning ? (
+        <p className="mt-4 text-green-600 font-semibold">
+          Waiting for camera permission...
+        </p>
+      ) : null}
     </div>
   );
 };
