@@ -14,15 +14,62 @@ const BarcodeScanner = () => {
 
     console.log("ZXing code reader initialized");
 
-    codeReader
-      .listVideoInputDevices()
-      .then((devices) => {
+    // Function to check for environment-facing (back) camera
+    const findBackCamera = async (devices) => {
+      // First, try to find a device with 'environment' facing mode
+      for (const device of devices) {
+        if (device.label.toLowerCase().includes('back') || 
+            device.label.toLowerCase().includes('environment') ||
+            device.label.toLowerCase().includes('rear')) {
+          return device.deviceId;
+        }
+      }
+      
+      // If no obvious back camera found, try to get environment-facing camera using constraints
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        // Get the active track to find the device ID
+        const tracks = stream.getVideoTracks();
+        const deviceId = tracks[0]?.getSettings().deviceId;
+        // Stop the stream since we just needed the device ID
+        tracks.forEach(track => track.stop());
+        return deviceId;
+      } catch (error) {
+        console.log('Could not access environment-facing camera:', error);
+        return null;
+      }
+    };
+
+    const setupCameras = async () => {
+      try {
+        // First, get all video input devices
+        const devices = await codeReader.listVideoInputDevices();
         setVideoInputDevices(devices);
-        if (devices.length > 0) {
+
+        if (devices.length === 0) {
+          console.log('No video input devices found');
+          return;
+        }
+
+        // Try to find a back camera
+        const backCameraId = await findBackCamera(devices);
+        
+        if (backCameraId) {
+          console.log('Found back camera with ID:', backCameraId);
+          setSelectedDeviceId(backCameraId);
+        } else {
+          // Fallback to the first available device
+          console.log('No back camera found, using default camera');
           setSelectedDeviceId(devices[0].deviceId);
         }
-      })
-      .catch((err) => console.error(err));
+      } catch (error) {
+        console.error('Error setting up cameras:', error);
+      }
+    };
+
+    setupCameras();
 
     return () => {
       codeReader.reset();
@@ -32,8 +79,18 @@ const BarcodeScanner = () => {
   const startScanning = () => {
     if (!selectedDeviceId) return;
 
-    codeReaderRef.current.decodeFromVideoDevice(
-      selectedDeviceId,
+    // Add environment-facing constraint when starting the camera
+    const constraints = {
+      video: {
+        deviceId: { exact: selectedDeviceId },
+        facingMode: 'environment',  // Prefer environment-facing camera
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    };
+
+    codeReaderRef.current.decodeFromConstraints(
+      constraints,
       videoRef.current,
       (result, err) => {
         if (result) {
