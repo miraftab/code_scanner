@@ -1,123 +1,109 @@
 import React, { useEffect, useRef, useState } from "react";
-import { BrowserMultiFormatReader, BarcodeFormat, NotFoundException } from "@zxing/library";
-import { BrowserCodeReader } from "@zxing/browser";
+import { BrowserMultiFormatReader, NotFoundException } from "@zxing/library";
 
-const BarcodeScanner = ({onScan, onError}) => {
+const BarcodeScanner = () => {
+  const [videoInputDevices, setVideoInputDevices] = useState([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState("");
+  const [resultText, setResultText] = useState("");
   const videoRef = useRef(null);
-  const [scanning, setScanning] = useState(false);
-  const [err, setErr] = useState(null);
   const codeReaderRef = useRef(null);
 
   useEffect(() => {
-    const initScanner = async () => {
-      try {
-        setScanning(true);
-        
-        const hints = new Map();
-        hints.set(BarcodeFormat.EAN_13, true);
-        hints.set(BarcodeFormat.EAN_8, true);
+    const codeReader = new BrowserMultiFormatReader();
+    codeReaderRef.current = codeReader;
 
-        codeReaderRef.current = new BrowserCodeReader(
-          new BrowserMultiFormatReader(hints)
-        );
+    console.log("ZXing code reader initialized");
 
-        console.log('Initialized code reader, requesting camera access...');
-
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { 
-              facingMode: 'environment', // Prefer rear camera on mobile
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
-            } 
-          });
-          
-          stream.getTracks().forEach(track => track.stop());
-          
-          console.log('Camera access granted, listing devices...');
-          
-          const videoInputDevices = await BrowserCodeReader.listVideoInputDevices();
-          console.log('Available video devices:', videoInputDevices);
-
-          if (!videoInputDevices || videoInputDevices.length === 0) {
-            throw new Error('No camera devices found.');
-          }
-
-          const firstDeviceId = videoInputDevices[0]?.deviceId;
-          console.log('Using camera device:', videoInputDevices[0]?.label || 'Default Camera');
-
-          if (!firstDeviceId) {
-            throw new Error('Camera device ID not available.');
-          }
-
-          await codeReaderRef.current.decodeFromVideoDevice(
-            firstDeviceId,
-            videoRef.current,
-            (result, error) => {
-              if (result) {
-                console.log('Barcode detected:', result.getText());
-                onScan(result.getText());
-              }
-              if (error && !(error instanceof NotFoundException)) {
-                console.error('Barcode scan error:', error);
-                onError?.(error);
-              }
-            }
-          );
-          
-        } catch (error) {
-          console.error('Camera access error:', error);
-          if (error.name === 'NotAllowedError') {
-            throw new Error('Camera permission was denied. Please allow camera access to use the barcode scanner.');
-          } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-            throw new Error('No camera found. Please ensure your camera is connected and not in use by another application.');
-          } else {
-            throw new Error(`Failed to access camera: ${error.message}`);
-          }
+    codeReader
+      .listVideoInputDevices()
+      .then((devices) => {
+        setVideoInputDevices(devices);
+        if (devices.length > 0) {
+          setSelectedDeviceId(devices[0].deviceId);
         }
-      } catch (error) {
-        console.error('Scanner initialization error:', error);
-        setErr(error.message);
-        onError?.(error);
-      } finally {
-        setScanning(false);
-      }
-    };
-
-    initScanner();
+      })
+      .catch((err) => console.error(err));
 
     return () => {
-      if (codeReaderRef.current) {
-        codeReaderRef.current.reset();
-      }
-      setScanning(false);
+      codeReader.reset();
     };
-  }, [onScan, onError]);
+  }, []);
+
+  const startScanning = () => {
+    if (!selectedDeviceId) return;
+
+    codeReaderRef.current.decodeFromVideoDevice(
+      selectedDeviceId,
+      videoRef.current,
+      (result, err) => {
+        if (result) {
+          console.log(result);
+          setResultText(result.getText());
+        }
+        if (err && !(err instanceof NotFoundException)) {
+          console.error(err);
+          setResultText(err.toString());
+        }
+      }
+    );
+
+    console.log(`Started continuous decode from camera with id ${selectedDeviceId}`);
+  };
+
+  const resetScanner = () => {
+    codeReaderRef.current.reset();
+    setResultText("");
+    console.log("Reset.");
+  };
 
   return (
-    <div className="w-full flex flex-col items-center">
-      {err && (
-        <div className="p-4 mb-4 text-red-700 bg-red-100 rounded-lg">
-          <p className="font-medium">Error:</p>
-          <p>{err}</p>
-          <button 
-            onClick={() => window.location.reload()} 
-            className="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+    <div className="p-4">
+      <h2 className="text-xl font-bold mb-4">Barcode Scanner</h2>
+
+      {videoInputDevices.length > 0 && (
+        <div id="sourceSelectPanel" className="mb-4">
+          <label className="block mb-2">Select Camera:</label>
+          <select
+            id="sourceSelect"
+            className="p-2 border rounded"
+            value={selectedDeviceId}
+            onChange={(e) => setSelectedDeviceId(e.target.value)}
           >
-            Retry
-          </button>
+            {videoInputDevices.map((device, index) => (
+              <option key={index} value={device.deviceId}>
+                {device.label || `Camera ${index + 1}`}
+              </option>
+            ))}
+          </select>
         </div>
       )}
-      <video 
-        ref={videoRef} 
-        className="w-full max-w-md rounded-xl shadow-lg"
-        playsInline
+
+      <div className="flex space-x-4 mb-4">
+        <button
+          id="startButton"
+          onClick={startScanning}
+          className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded"
+        >
+          Start
+        </button>
+        <button
+          id="resetButton"
+          onClick={resetScanner}
+          className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded"
+        >
+          Reset
+        </button>
+      </div>
+
+      <video
+        ref={videoRef}
+        id="video"
+        className="w-full max-w-md rounded-xl shadow-lg mb-4"
       />
-      {scanning ? (
-        <p className="mt-4 text-green-600 font-semibold">
-          Waiting for camera permission...
-        </p>
-      ) : null}
+
+      <p id="result" className="text-lg font-mono text-gray-800">
+        {resultText}
+      </p>
     </div>
   );
 };
